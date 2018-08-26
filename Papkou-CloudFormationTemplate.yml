@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Autoscaling group
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      "64": "ami-05378f41110822767"
+    us-east-2:
+      "64": "ami-03c602070acf08b27"
+  AvailabilityZ:
+    us-east-1:
+      zone: us-east-1b
+    us-east-2:
+      zone: us-east-2c
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+  
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: InternetGateway
+      VpcId:
+        Ref: VPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !FindInMap [AvailabilityZ, !Ref "AWS::Region", zone]
+      CidrBlock: 10.0.0.0/24
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: Public
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: Public
+
+  OutboundConnectionRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+      RouteTableId:
+        Ref: PublicRouteTable
+  
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      SubnetId:
+        Ref: PublicSubnet
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Allows inbound http traffic
+      SecurityGroupIngress:
+      - IpProtocol: "tcp"
+        CidrIp: 0.0.0.0/0
+        FromPort: 80
+        ToPort: 80
+
+      - IpProtocol: "tcp"
+        FromPort: "22"
+        ToPort: "22"
+        CidrIp: "0.0.0.0/0"
+
+      Tags:
+        - Key: Name
+          Value: http
+
+
+  LoadBalancerPapkou:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      LoadBalancerName: LB-Papkou2
+      Listeners:
+        - LoadBalancerPort: '80'
+          InstancePort: '80'
+          InstanceProtocol: HTTP
+          Protocol: HTTP
+      SecurityGroups:
+        - Ref: SecurityGroup
+      Subnets:
+        - Ref: PublicSubnet
+
+  LaunchConfInstance:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      LaunchConfigurationName: LC-Papkou2
+      AssociatePublicIpAddress: true
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", 64]
+      SecurityGroups:
+        - Ref: "SecurityGroup"
+      InstanceType: t2.micro
+    DependsOn: VPCGatewayAttachment
+
+  AutoScalingGroupInstance:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: AutoScalingGroupPapkou
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 2
+      LoadBalancerNames: 
+        - Ref: "LoadBalancerPapkou"
+      LaunchConfigurationName:
+        Ref: LaunchConfInstance
+      AvailabilityZones: 
+        Fn::GetAZs: !FindInMap [AvailabilityZ, !Ref "AWS::Region", zone]
+      VPCZoneIdentifier:
+        - Ref: PublicSubnet
+
